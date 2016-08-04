@@ -16,10 +16,11 @@ const (
 )
 
 type Application struct {
-	Id      string   `toml:"id"`      // program id
-	Program string   `toml:"program"` // executable to run
-	Args    []string `toml:"args"`    // arguments
-	Dir     string   `toml:"dir"`     // working directory
+	Id      string   `toml:"id"`       // program id
+	Program string   `toml:"program"`  // executable to run
+	Args    []string `toml:"args"`     // arguments
+	Dir     string   `toml:"dir"`      // working directory
+	MinWait int      `toml:"min-wait"` // minimum wait time before restarting the process
 
 	StdoutIdle int `toml:"stdout-idle"` // stdout idle time, before stopping
 	StderrIdle int `toml:"stderr-idle"` // stderr idle time, before stopping
@@ -95,7 +96,11 @@ func main() {
 			// function that calculate sleep time based in the current sleep time
 			// useful for exponential backoff ( default is this function )
 			DelayBetweenSpawns: func(currentSleep int) (sleepTime int) {
-				return currentSleep * 2
+				if app.MinWait > 0 {
+					return app.MinWait
+				} else {
+					return currentSleep * 2
+				}
 			},
 		})
 
@@ -122,15 +127,15 @@ func main() {
 			for {
 				select {
 				case msg := <-p.Stdout:
-					log.Printf("%v:INFO  %s", pid, msg)
+					log.Printf("%v:INFO  %s", pid, *msg)
 				case msg := <-p.Stderr:
-					log.Printf("%v:ERROR %s", pid, msg)
+					log.Printf("%v:ERROR %s", pid, *msg)
 				case event := <-events:
 					if config.Debug {
 						log.Println(event.Message)
 					}
 				case <-done: // process quit
-					log.Printf("Closing loop we are done....")
+					log.Printf("%v:STARTER Closing loop we are done....", pid)
 					wg.Done()
 					return
 				}
