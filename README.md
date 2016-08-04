@@ -1,6 +1,10 @@
 # starter
 A starter / supervisor application based on https://github.com/kontera-technologies/go-supervisor
 
+The starter program starts and monitor the list of applications described in the configuration file. It can kill them and restart them when necessary.
+
+Stopping the starter process should also stop all the monitored applications.
+
 Usage
 -----
 
