@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+        "os"
 	"strings"
 	"sync"
 
@@ -37,6 +38,8 @@ type Config struct {
 	Debug      bool `toml:"debug"`      // log supervisor events
 
 	Applications []Application `toml:"application"` // list of applications to start and monitor
+
+	Environment map[string]string `toml:"env"` // environment variables
 }
 
 func getConfig() *Config {
@@ -92,6 +95,10 @@ func main() {
 	if len(config.Applications) == 0 {
 		log.Fatal("no applications to run")
 	}
+
+        for k, v := range config.Environment {
+            os.Setenv(k, v)
+        }
 
 	processes := map[string]*supervisor.Process{}
 	colors := map[string]string{}
