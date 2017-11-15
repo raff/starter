@@ -3,12 +3,15 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/BurntSushi/toml"
 	"github.com/gobs/pretty"
 	"github.com/kontera-technologies/go-supervisor/supervisor"
+	"github.com/mgutz/ansi"
 )
 
 const (
@@ -21,6 +24,7 @@ type Application struct {
 	Args    []string `toml:"args"`     // arguments
 	Dir     string   `toml:"dir"`      // working directory
 	MinWait int      `toml:"min-wait"` // minimum wait time before restarting the process
+	Color   string   `toml:"color"`    // color for log messages
 
 	StdoutIdle int `toml:"stdout-idle"` // stdout idle time, before stopping
 	StderrIdle int `toml:"stderr-idle"` // stderr idle time, before stopping
@@ -32,7 +36,7 @@ type Config struct {
 	MaxSpawns  int  `toml:"max-spawns"` // max spawns limit
 	Debug      bool `toml:"debug"`      // log supervisor events
 
-	Applications []Application `toml:"applications"` // list of applications to start and monitor
+	Applications []Application `toml:"application"` // list of applications to start and monitor
 }
 
 func getConfig() *Config {
@@ -66,6 +70,19 @@ func getConfig() *Config {
 	return &config
 }
 
+type colorWriter struct {
+	colorize func(string) string
+}
+
+func ColorWriter(c string) io.Writer {
+	return &colorWriter{ansi.ColorFunc(c)}
+}
+
+func (w *colorWriter) Write(b []byte) (int, error) {
+	s := strings.TrimRight(string(b), "\r\n")
+	return fmt.Println(w.colorize(s))
+}
+
 func main() {
 	config := getConfig()
 	if config == nil {
@@ -77,10 +94,15 @@ func main() {
 	}
 
 	processes := map[string]*supervisor.Process{}
+	colors := map[string]string{}
 
 	for i, app := range config.Applications {
 		if app.Id == "" {
 			app.Id = fmt.Sprintf("app-%v", i)
+		}
+
+		if app.Color == "" {
+			app.Color = "off"
 		}
 
 		p, err := supervisor.Supervise(app.Program, supervisor.Options{
@@ -109,6 +131,7 @@ func main() {
 		}
 
 		processes[app.Id] = p
+		colors[app.Id] = app.Color
 	}
 
 	var wg sync.WaitGroup
@@ -123,19 +146,20 @@ func main() {
 		go func() {
 			done := p.NotifyDone(make(chan bool)) // process is done...
 			events := p.NotifyEvents(make(chan *supervisor.Event, 1000))
+			logger := log.New(ColorWriter(colors[pid]), "", log.LstdFlags)
 
 			for {
 				select {
 				case msg := <-p.Stdout:
-					log.Printf("%v:INFO  %s", pid, *msg)
+					logger.Printf("%v:INFO  %s", pid, *msg)
 				case msg := <-p.Stderr:
-					log.Printf("%v:ERROR %s", pid, *msg)
+					logger.Printf("%v:ERROR %s", pid, *msg)
 				case event := <-events:
 					if config.Debug {
-						log.Println(event.Message)
+						logger.Println(event.Message)
 					}
 				case <-done: // process quit
-					log.Printf("%v:STARTER Closing loop we are done....", pid)
+					logger.Printf("%v:STARTER Closing loop we are done....", pid)
 					wg.Done()
 					return
 				}
