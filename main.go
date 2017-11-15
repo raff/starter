@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
-        "os"
+	"os"
 	"strings"
 	"sync"
 
@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	VERSION = "0.1"
+	VERSION = "0.2"
 )
 
 type Application struct {
@@ -29,6 +29,8 @@ type Application struct {
 
 	StdoutIdle int `toml:"stdout-idle"` // stdout idle time, before stopping
 	StderrIdle int `toml:"stderr-idle"` // stderr idle time, before stopping
+
+	Manual bool `toml:"manual"`
 }
 
 type Config struct {
@@ -42,7 +44,7 @@ type Config struct {
 	Environment map[string]string `toml:"env"` // environment variables
 }
 
-func getConfig() *Config {
+func getConfig() (*Config, map[string]struct{}) {
 	var config Config
 
 	cfile := flag.String("conf", "starter.conf", "configuration file")
@@ -58,7 +60,7 @@ func getConfig() *Config {
 
 	if *version {
 		fmt.Println("starter version", VERSION)
-		return nil
+		return nil, nil
 	}
 
 	if _, err := toml.DecodeFile(*cfile, &config); err != nil {
@@ -67,10 +69,17 @@ func getConfig() *Config {
 
 	if *printConf {
 		pretty.PrettyPrint(config)
-		return nil
+
+		return nil, nil
 	}
 
-	return &config
+	apps := map[string]struct{}{}
+
+	for _, app := range flag.Args() {
+		apps[app] = struct{}{}
+	}
+
+	return &config, apps
 }
 
 type colorWriter struct {
@@ -87,7 +96,7 @@ func (w *colorWriter) Write(b []byte) (int, error) {
 }
 
 func main() {
-	config := getConfig()
+	config, apps := getConfig()
 	if config == nil {
 		return
 	}
@@ -96,9 +105,9 @@ func main() {
 		log.Fatal("no applications to run")
 	}
 
-        for k, v := range config.Environment {
-            os.Setenv(k, v)
-        }
+	for k, v := range config.Environment {
+		os.Setenv(k, v)
+	}
 
 	processes := map[string]*supervisor.Process{}
 	colors := map[string]string{}
@@ -106,6 +115,14 @@ func main() {
 	for i, app := range config.Applications {
 		if app.Id == "" {
 			app.Id = fmt.Sprintf("app-%v", i)
+		}
+
+		if len(apps) == 0 {
+			if app.Manual {
+				continue
+			}
+		} else if _, selected := apps[app.Id]; !selected {
+			continue
 		}
 
 		if app.Color == "" {
