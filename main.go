@@ -38,6 +38,7 @@ type Config struct {
 	Interrupts int  `toml:"interrupts"` // number of attempts to interrupt the process before killing it
 	MaxSpawns  int  `toml:"max-spawns"` // max spawns limit
 	Debug      bool `toml:"debug"`      // log supervisor events
+	Colors     bool `toml:"debug"`      // colorize logs
 
 	Applications []Application `toml:"application"` // list of applications to start and monitor
 
@@ -52,6 +53,7 @@ func getConfig() (*Config, map[string]struct{}) {
 	printConf := flag.Bool("print-conf", false, "pretty-print configuration file and exit")
 
 	flag.BoolVar(&config.Debug, "debug", false, "log supervisor events")
+	flag.BoolVar(&config.Colors, "colors", true, "enable/disable colorizing")
 	flag.IntVar(&config.Respawns, "respawns", 10, "number of attempts to start a process")
 	flag.IntVar(&config.Interrupts, "interrupts", 10, "number of attempts to interrupt a process before killing it")
 	flag.IntVar(&config.MaxSpawns, "max-spawns", 10, "max spawns limit per process")
@@ -160,6 +162,8 @@ func main() {
 
 	var wg sync.WaitGroup
 
+	defaultLogger := log.New(os.Stdout, "", log.LstdFlags)
+
 	for curpid, curp := range processes {
 		wg.Add(1)
 
@@ -170,7 +174,10 @@ func main() {
 		go func() {
 			done := p.NotifyDone(make(chan bool)) // process is done...
 			events := p.NotifyEvents(make(chan *supervisor.Event, 1000))
-			logger := log.New(ColorWriter(colors[pid]), "", log.LstdFlags)
+			logger := defaultLogger
+			if config.Colors {
+				logger = log.New(ColorWriter(colors[pid]), "", log.LstdFlags)
+			}
 
 			for {
 				select {
