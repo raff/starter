@@ -182,9 +182,9 @@ func main() {
 			for {
 				select {
 				case msg := <-p.Stdout:
-					logger.Printf("%v:INFO  %s", pid, *msg)
+					logger.Printf("%v:O  %s", pid, *msg)
 				case msg := <-p.Stderr:
-					logger.Printf("%v:ERROR %s", pid, *msg)
+					logger.Printf("%v:E %s", pid, *msg)
 				case event := <-events:
 					if config.Debug {
 						logger.Println(event.Message)
