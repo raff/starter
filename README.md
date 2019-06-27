@@ -42,3 +42,31 @@ The format of the configuration file is the following:
     stderr-idle = 5                 # int (secs) - application is restarted if there are no writes for this amount time
                                     #   if 0, stderr is not monitored
     min-wait = 10                   # int (secs) - minimum amount of time to wait before restarting the application
+
+It is also possible to execute a series of tasks in steps (worflow) by setting the global option "workflow = true"
+and adding a "next" taskid to each tasks:
+
+    # global options
+    workflow = true
+
+    # sequence of tasks
+    [[application]]
+    id = "task1"
+    ...
+    next = "task2"
+
+    [[application]]
+    id = "task2"
+    ...
+    next = "task3"
+
+    [[application]]
+    id = "task3"
+    ...
+    # no next here
+
+In this case tasks are executed sequentially, starting from the first task in the list or from the task specified on the command line.
+When a task terminates, the next task is started (following the "next" field). If a task has no "next" field, the workflow terminates.
+
+It should be actually possible to start multiple workflows by specifying multiple start tasks on the command line. They will start in parallel,
+then each one will move to the next step untill all worflows are completed.

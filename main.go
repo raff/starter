@@ -8,11 +8,12 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/gobs/pretty"
-	"github.com/kontera-technologies/go-supervisor/supervisor"
 	"github.com/mgutz/ansi"
+	"github.com/raff/go-supervisor/supervisor"
 )
 
 const (
@@ -30,7 +31,10 @@ type Application struct {
 	StdoutIdle int `toml:"stdout-idle"` // stdout idle time, before stopping
 	StderrIdle int `toml:"stderr-idle"` // stderr idle time, before stopping
 
-	Manual bool `toml:"manual"`
+	Manual bool `toml:"manual"` // don't start automatically (select from command line)
+	//Restart bool `toml:"restart"`       // restart on termination
+
+	Next string `toml:"next"` // in workflow mode, start "next" application after this ends
 }
 
 type Config struct {
@@ -38,14 +42,28 @@ type Config struct {
 	Interrupts int  `toml:"interrupts"` // number of attempts to interrupt the process before killing it
 	MaxSpawns  int  `toml:"max-spawns"` // max spawns limit
 	Debug      bool `toml:"debug"`      // log supervisor events
-	Colors     bool `toml:"debug"`      // colorize logs
+	Colors     bool `toml:"colors"`     // colorize logs
+	Workflow   bool `toml:"workflow"`   // execute applications in sequence, instead of starting all of them
 
-	Applications []Application `toml:"application"` // list of applications to start and monitor
+	Applications []*Application `toml:"application"` // list of applications to start and monitor
 
 	Environment map[string]string `toml:"env"` // environment variables
+
+	colors map[string]string
+	manual map[string]bool
 }
 
-func getConfig() (*Config, map[string]struct{}) {
+func (c *Config) getApp(name string) *Application {
+	for _, app := range c.Applications {
+		if app.Id == name {
+			return app
+		}
+	}
+
+	return nil
+}
+
+func getConfig() *Config {
 	var config Config
 
 	cfile := flag.String("conf", "starter.conf", "configuration file")
@@ -62,7 +80,7 @@ func getConfig() (*Config, map[string]struct{}) {
 
 	if *version {
 		fmt.Println("starter version", VERSION)
-		return nil, nil
+		return nil
 	}
 
 	if _, err := toml.DecodeFile(*cfile, &config); err != nil {
@@ -72,16 +90,36 @@ func getConfig() (*Config, map[string]struct{}) {
 	if *printConf {
 		pretty.PrettyPrint(config)
 
-		return nil, nil
+		return nil
 	}
 
-	apps := map[string]struct{}{}
+	config.manual = map[string]bool{} // applications selected from command line
+	config.colors = map[string]string{}
 
 	for _, app := range flag.Args() {
-		apps[app] = struct{}{}
+		if config.getApp(app) == nil { // validate application names
+			log.Printf("invalid application name %q", app)
+			continue
+		}
+
+		config.manual[app] = true
 	}
 
-	return &config, apps
+	for i, app := range config.Applications {
+		if app.Id == "" {
+			app.Id = fmt.Sprintf("app-%v", i)
+		}
+		if app.Color == "" {
+			app.Color = "off"
+		}
+		config.colors[app.Id] = app.Color
+	}
+
+	for k, v := range config.Environment {
+		os.Setenv(k, v)
+	}
+
+	return &config
 }
 
 type colorWriter struct {
@@ -98,7 +136,7 @@ func (w *colorWriter) Write(b []byte) (int, error) {
 }
 
 func main() {
-	config, apps := getConfig()
+	config := getConfig()
 	if config == nil {
 		return
 	}
@@ -107,39 +145,22 @@ func main() {
 		log.Fatal("no applications to run")
 	}
 
-	for k, v := range config.Environment {
-		os.Setenv(k, v)
-	}
+	defaultLogger := log.New(os.Stdout, "", log.LstdFlags)
 
-	processes := map[string]*supervisor.Process{}
-	colors := map[string]string{}
+	var wg sync.WaitGroup
+	var startApplication func(*Application, bool)
 
-	for i, app := range config.Applications {
-		if app.Id == "" {
-			app.Id = fmt.Sprintf("app-%v", i)
-		}
-
-		if len(apps) == 0 {
-			if app.Manual {
-				continue
-			}
-		} else if _, selected := apps[app.Id]; !selected {
-			continue
-		}
-
-		if app.Color == "" {
-			app.Color = "off"
-		}
-
+	startApplication = func(app *Application, stopOnSuccess bool) {
 		p, err := supervisor.Supervise(app.Program, supervisor.Options{
 			Args:                    app.Args,          // argumets to pass ( default is none )
 			SpawnAttempts:           config.Respawns,   // attempts before giving up ( default 10 )
 			AttemptsBeforeTerminate: config.Interrupts, // on Stop() terminate process after X interrupt attempts (default is 10)
-			Dir:            app.Dir,          // run dir ( default is current dir )
-			Id:             app.Id,           // will be added to every log print ( default is "NOID")
-			MaxSpawns:      config.MaxSpawns, // Max spawn limit ( default is 1 )
-			StdoutIdleTime: app.StdoutIdle,   // stop worker if we didn't recived stdout message in X seconds ( default is 0 - disbaled )
-			StderrIdleTime: app.StderrIdle,   // stop worker if we didn't recived stderr message in X seconds ( default is 0 - disbaled )
+			StopOnSuccess:           stopOnSuccess,     // in workflow mode we want to run only once
+			Dir:                     app.Dir,           // run dir ( default is current dir )
+			Id:                      app.Id,            // will be added to every log print ( default is "NOID")
+			MaxSpawns:               config.MaxSpawns,  // Max spawn limit ( default is 1 )
+			StdoutIdleTime:          app.StdoutIdle,    // stop worker if we didn't recived stdout message in X seconds ( default is 0 - disbaled )
+			StderrIdleTime:          app.StderrIdle,    // stop worker if we didn't recived stderr message in X seconds ( default is 0 - disbaled )
 
 			// function that calculate sleep time based in the current sleep time
 			// useful for exponential backoff ( default is this function )
@@ -154,29 +175,20 @@ func main() {
 
 		if err != nil {
 			log.Printf("failed to start process: %s", err)
+			return
 		}
 
-		processes[app.Id] = p
-		colors[app.Id] = app.Color
-	}
-
-	var wg sync.WaitGroup
-
-	defaultLogger := log.New(os.Stdout, "", log.LstdFlags)
-
-	for curpid, curp := range processes {
 		wg.Add(1)
 
-		pid := curpid
-		p := curp
-
 		// read stuff
-		go func() {
+		go func(app *Application, p *supervisor.Process) {
+			pid := app.Id
+
 			done := p.NotifyDone(make(chan bool)) // process is done...
 			events := p.NotifyEvents(make(chan *supervisor.Event, 1000))
 			logger := defaultLogger
 			if config.Colors {
-				logger = log.New(ColorWriter(colors[pid]), "", log.LstdFlags)
+				logger = log.New(ColorWriter(config.colors[pid]), "", log.LstdFlags)
 			}
 
 			for {
@@ -187,16 +199,56 @@ func main() {
 					logger.Printf("%v:E %s", pid, *msg)
 				case event := <-events:
 					if config.Debug {
-						logger.Println(event.Message)
+						logger.Println(event.Code, event.Message) // the message already contains the pid
 					}
 				case <-done: // process quit
-					logger.Printf("%v:STARTER Closing loop we are done....", pid)
-					wg.Done()
+					logger.Printf("%v: DONE", pid)
+					defer wg.Done()
+
+					if config.Workflow && app.Next != "" { // start next step
+						if p.LastError() != nil {
+							logger.Printf("%v: Step terminated with error %v: stop workflow", pid, p.LastError())
+							return
+						}
+
+						next := config.getApp(app.Next)
+						if next == nil {
+							log.Printf("%v: invalid next application %q", pid, app.Next)
+						} else {
+							startApplication(next, true)
+						}
+					}
+
 					return
 				}
 			}
-		}()
+		}(app, p)
 	}
 
+	if config.Workflow {
+		// here we want to run any manual task to start one or more workflows
+		// if there are no selected manual tasks, we pick the first in the list
+
+		if len(config.manual) == 0 {
+			app := config.Applications[0].Id
+			config.manual[app] = true
+		}
+
+		for appid := range config.manual {
+			app := config.getApp(appid)
+			startApplication(app, true)
+		}
+	} else {
+		// here we want to run all "automatic" tasks, and all manual tasks that have been selected on the command line
+		for _, app := range config.Applications {
+			if app.Manual && !config.manual[app.Id] {
+				continue
+			}
+
+			startApplication(app, false)
+		}
+	}
+
+	time.Sleep(time.Second)
 	wg.Wait()
 }
