@@ -13,11 +13,11 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/gobs/pretty"
 	"github.com/mgutz/ansi"
-	"github.com/raff/go-supervisor/supervisor"
+	"github.com/raff/go-supervisor"
 )
 
 const (
-	VERSION = "0.2"
+	VERSION = "0.3"
 )
 
 type Application struct {
@@ -63,6 +63,23 @@ func (c *Config) getApp(name string) *Application {
 	return nil
 }
 
+func expandEnv(s string) string {
+	mapper := func(vname string) string {
+		vd := strings.SplitN(vname, ":-", 2)
+		if len(vd) == 1 {
+			return os.Getenv(vname)
+		}
+
+		if venv := os.Getenv(vd[0]); venv != "" {
+			return venv
+		}
+
+		return vd[1]
+	}
+
+	return os.Expand(s, mapper)
+}
+
 func getConfig() *Config {
 	var config Config
 
@@ -87,14 +104,12 @@ func getConfig() *Config {
 		log.Fatal(err)
 	}
 
-	if *printConf {
-		pretty.PrettyPrint(config)
-
-		return nil
-	}
-
 	config.manual = map[string]bool{} // applications selected from command line
 	config.colors = map[string]string{}
+
+	for k, v := range config.Environment {
+		os.Setenv(k, expandEnv(v))
+	}
 
 	for _, app := range flag.Args() {
 		if config.getApp(app) == nil { // validate application names
@@ -111,12 +126,23 @@ func getConfig() *Config {
 		}
 		if app.Color == "" {
 			app.Color = "off"
+		} else {
+			app.Color = expandEnv(app.Color)
 		}
+
 		config.colors[app.Id] = app.Color
+
+		app.Program = expandEnv(app.Program)
+		app.Dir = expandEnv(app.Dir)
+
+		for i, arg := range app.Args {
+			app.Args[i] = expandEnv(arg)
+		}
 	}
 
-	for k, v := range config.Environment {
-		os.Setenv(k, v)
+	if *printConf {
+		pretty.PrettyPrint(config)
+		return nil
 	}
 
 	return &config

@@ -32,6 +32,11 @@ The format of the configuration file is the following:
     max-spawn  = 10
     respawns   = 10
 
+    # environment variables
+    [env]
+    name = "value"
+    name = "${ENV:-default}"
+
     # per application options (you can have multiple [[applications]] sections, one per applications)
     [[applications]]
     id = "example-1"                # string - the identifier for this application (default "app-{number}")
@@ -42,6 +47,8 @@ The format of the configuration file is the following:
     stderr-idle = 5                 # int (secs) - application is restarted if there are no writes for this amount time
                                     #   if 0, stderr is not monitored
     min-wait = 10                   # int (secs) - minimum amount of time to wait before restarting the application
+
+Environment variables are passed to the program but can also be expanded in `program`, `args`, `dir` and `color`.
 
 It is also possible to execute a series of tasks in steps (worflow) by setting the global option "workflow = true"
 and adding a "next" taskid to each tasks:
