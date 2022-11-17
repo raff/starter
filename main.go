@@ -35,6 +35,8 @@ type Application struct {
 	//Restart bool `toml:"restart"`       // restart on termination
 
 	Next string `toml:"next"` // in workflow mode, start "next" application after this ends
+
+	Count int `toml:"count"` // this is a template, generate `Count` instances of this application
 }
 
 type Config struct {
@@ -120,12 +122,38 @@ func getConfig() *Config {
 		config.manual[app] = true
 	}
 
+	var templates []*Application
+
+	for _, app := range config.Applications {
+		if app.Count > 0 { // template
+			templates = append(templates, app)
+		}
+	}
+
+	for _, t := range templates {
+		for i := 0; i < t.Count; i++ {
+			app := *t
+			app.Count = 0
+
+			config.Applications = append(config.Applications, &app)
+		}
+	}
+
 	for i, app := range config.Applications {
 		if app.Id == "" {
-			app.Id = fmt.Sprintf("app-%v", i)
+			app.Id = fmt.Sprintf("app-%v", i+1)
+		} else if strings.Contains(app.Id, "%") {
+			app.Id = fmt.Sprintf(app.Id, i+1)
 		}
 		if app.Color == "" {
 			app.Color = "off"
+		} else if app.Color == "auto" {
+			c := 231 - i
+			if c < 20 {
+				c = 255
+			}
+
+			app.Color = fmt.Sprintf("%v", c)
 		} else {
 			app.Color = expandEnv(app.Color)
 		}
