@@ -10,44 +10,43 @@ import (
 	"sync"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/gobs/pretty"
+	"github.com/hashicorp/hcl/hclsimple"
 	"github.com/mgutz/ansi"
 	"github.com/raff/go-supervisor"
 )
 
 const (
-	VERSION = "0.3"
+	VERSION = "0.9"
 )
 
 type Application struct {
-	Id      string   `toml:"id"`       // program id
-	Program string   `toml:"program"`  // executable to run
-	Args    []string `toml:"args"`     // arguments
-	Dir     string   `toml:"dir"`      // working directory
-	MinWait int      `toml:"min-wait"` // minimum wait time before restarting the process
-	Color   string   `toml:"color"`    // color for log messages
+	Id      string   `hcl:",label"`            // program id
+	Program string   `hcl:"program"`           // executable to run
+	Args    []string `hcl:"args,optional"`     // arguments
+	Dir     string   `hcl:"dir,optional"`      // working directory
+	MinWait int      `hcl:"min-wait,optional"` // minimum wait time before restarting the process
+	Color   string   `hcl:"color,optional"`    // color for log messages
 
-	StdoutIdle int `toml:"stdout-idle"` // stdout idle time, before stopping
-	StderrIdle int `toml:"stderr-idle"` // stderr idle time, before stopping
+	StdoutIdle int `hcl:"stdout-idle,optional"` // stdout idle time, before stopping
+	StderrIdle int `hcl:"stderr-idle,optional"` // stderr idle time, before stopping
 
-	Manual bool `toml:"manual"` // don't start automatically (select from command line)
-	//Restart bool `toml:"restart"`       // restart on termination
+	Manual bool `hcl:"manual,optional"` // don't start automatically (select from command line)
 
-	Next string `toml:"next"` // in workflow mode, start "next" application after this ends
+	Next string `hcl:"next,optional"` // in workflow mode, start "next" application after this ends
 }
 
 type Config struct {
-	Respawns   int  `toml:"respawns"`   // number of attempts to start a process
-	Interrupts int  `toml:"interrupts"` // number of attempts to interrupt the process before killing it
-	MaxSpawns  int  `toml:"max-spawns"` // max spawns limit
-	Debug      bool `toml:"debug"`      // log supervisor events
-	Colors     bool `toml:"colors"`     // colorize logs
-	Workflow   bool `toml:"workflow"`   // execute applications in sequence, instead of starting all of them
+	Respawns   int  `hcl:"respawns,optional"`   // number of attempts to start a process
+	Interrupts int  `hcl:"interrupts,optional"` // number of attempts to interrupt the process before killing it
+	MaxSpawns  int  `hcl:"max-spawns,optional"` // max spawns limit
+	Debug      bool `hcl:"debug,optional"`      // log supervisor events
+	Colors     bool `hcl:"colors,optional"`     // colorize logs
+	Workflow   bool `hcl:"workflow,optional"`   // execute applications in sequence, instead of starting all of them
 
-	Applications []*Application `toml:"application"` // list of applications to start and monitor
+	Applications []*Application `hcl:"application,block"` // list of applications to start and monitor
 
-	Environment map[string]string `toml:"env"` // environment variables
+	Environment map[string]string `hcl:"environment,optional"` // environment variables
 
 	colors map[string]string
 	manual map[string]bool
@@ -83,7 +82,7 @@ func expandEnv(s string) string {
 func getConfig() *Config {
 	var config Config
 
-	cfile := flag.String("conf", "starter.conf", "configuration file")
+	cfile := flag.String("conf", "starter.hcl", "configuration file")
 	version := flag.Bool("version", false, "print version and exit")
 	printConf := flag.Bool("print-conf", false, "pretty-print configuration file and exit")
 
@@ -100,7 +99,7 @@ func getConfig() *Config {
 		return nil
 	}
 
-	if _, err := toml.DecodeFile(*cfile, &config); err != nil {
+	if err := hclsimple.DecodeFile(*cfile, nil, &config); err != nil {
 		log.Fatal(err)
 	}
 
@@ -123,9 +122,13 @@ func getConfig() *Config {
 	for i, app := range config.Applications {
 		if app.Id == "" {
 			app.Id = fmt.Sprintf("app-%v", i)
-		}
+		} else if strings.Contains(app.Id, "%") {
+			app.Id = fmt.Sprintf(app.Id, i)
+                }
 		if app.Color == "" {
 			app.Color = "off"
+                } else if app.Color == "seq" {
+                        app.Color = fmt.Sprintf("%v", 16 + i)
 		} else {
 			app.Color = expandEnv(app.Color)
 		}
