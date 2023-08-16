@@ -37,8 +37,8 @@ The format of the configuration file is the following:
     name = "value"
     name = "${ENV:-default}"
 
-    # per application options (you can have multiple [[applications]] sections, one per applications)
-    [[applications]]
+    # per application options (you can have multiple [[application]] sections, one per application)
+    [[application]]
     id = "example-1"                # string - the identifier for this application (default "app-{number}")
     program = "example.bash"        # string - application path or name (required)
     args = ["hello"]                # [string,...] - a list of application arguments
