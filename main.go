@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+        "regexp"
 	"strings"
 	"sync"
 	"time"
@@ -13,7 +14,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/gobs/pretty"
 	"github.com/mgutz/ansi"
-	"github.com/raff/go-supervisor"
+	"github.com/kontera-technologies/go-supervisor"
 )
 
 const (
@@ -46,12 +47,14 @@ type Config struct {
 	Debug      bool `toml:"debug"`      // log supervisor events
 	Colors     bool `toml:"colors"`     // colorize logs
 	Workflow   bool `toml:"workflow"`   // execute applications in sequence, instead of starting all of them
+        Patterns map[string]string `toml:"patterns"` // map of color -> regex patterns
 
 	Applications []*Application `toml:"application"` // list of applications to start and monitor
 
 	Environment map[string]string `toml:"env"` // environment variables
 
 	colors map[string]string
+        recolors map[string]*regexp.Regexp
 	manual map[string]bool
 }
 
@@ -108,6 +111,11 @@ func getConfig() *Config {
 
 	config.manual = map[string]bool{} // applications selected from command line
 	config.colors = map[string]string{}
+	config.recolors = map[string]*regexp.Regexp{}
+
+        for c, p := range config.Patterns {
+            config.recolors[c] = regexp.MustCompile(p)
+        }
 
 	for k, v := range config.Environment {
 		os.Setenv(k, expandEnv(v))
@@ -178,14 +186,22 @@ func getConfig() *Config {
 
 type colorWriter struct {
 	colorize func(string) string
+        recolors map[string]*regexp.Regexp
 }
 
-func ColorWriter(c string) io.Writer {
-	return &colorWriter{ansi.ColorFunc(c)}
+func ColorWriter(c string, recols map[string]*regexp.Regexp) io.Writer {
+	return &colorWriter{ansi.ColorFunc(c), recols}
 }
 
 func (w *colorWriter) Write(b []byte) (int, error) {
 	s := strings.TrimRight(string(b), "\r\n")
+
+        for c, r := range w.recolors {
+            if r.MatchString(s) {
+	        return fmt.Println(ansi.Color(s, c))
+            }
+        }
+
 	return fmt.Println(w.colorize(s))
 }
 
@@ -242,7 +258,7 @@ func main() {
 			events := p.NotifyEvents(make(chan *supervisor.Event, 1000))
 			logger := defaultLogger
 			if config.Colors {
-				logger = log.New(ColorWriter(config.colors[pid]), "", log.LstdFlags)
+				logger = log.New(ColorWriter(config.colors[pid], config.recolors), "", log.LstdFlags)
 			}
 
 			for {
